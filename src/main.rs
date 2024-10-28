@@ -24,7 +24,7 @@ mod uniswapv2;
 // TODO:
 // - Take RPC_URL from env variables. Currently using local Reth node.
 // - Improve swap error handling
-// - Add more options to the CLI (more logs, more details about token etc)
+// - Add more options to the CLI (more logs, more details about token, use specific sender)
 
 const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 type AlloyCacheDB = CacheDB<AlloyDB<Http<Client>, Ethereum, RootProvider<Http<Client>>>>;
@@ -69,10 +69,9 @@ async fn test_token(pair: UniV2Pair, token: ERC20) -> Result<()> {
 
     let mut cache_db = get_cache_db(client)?;
 
+    // 1. Add WETH to account
     let acc = address!("EAa1E618F9Bf501BC12680630605e1765dE6d916");
     let weth_balance_slot = U256::from(3);
-
-    // 10 WETH
     let ten_eth = U256::from(10_u128.pow(18));
     let weth_user_balance_slot = keccak256((acc, weth_balance_slot).abi_encode());
 
@@ -106,13 +105,9 @@ async fn test_token(pair: UniV2Pair, token: ERC20) -> Result<()> {
         (reserve1, reserve0)
     };
 
-    // calculate token amount out
+    // 2. Swap WETH for Token
     let amount_out = get_amount_out(amount_in, reserve_in, reserve_out, &mut cache_db).await?;
-
-    // transfer WETH to TOKEN-WETH pair
     transfer(acc, pair.address, amount_in, WETH, &mut cache_db)?;
-
-    // execute low-level swap without using UniswapV2 router
     swap(
         acc,
         pair.address,
@@ -122,10 +117,11 @@ async fn test_token(pair: UniV2Pair, token: ERC20) -> Result<()> {
         &mut cache_db,
     )?;
 
+    // 3. Swap Token for WETH
+    //    this is what shows if the token is a honeypot or not.
     transfer(acc, pair.address, amount_out, token.address, &mut cache_db)?;
     let weth_amount_out =
         get_amount_out(amount_out, reserve_out, reserve_in, &mut cache_db).await?;
-
     swap(
         acc,
         pair.address,
