@@ -21,10 +21,11 @@ use uniswapv2::{get_weth_pair, UniV2Pair};
 mod erc20;
 mod uniswapv2;
 
-const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
-// const USDC: Address = address!("a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
-// const WETH_USDC_PAIR: Address = address!("B4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc");
+// TODO:
+// - Take RPC_URL from env variables. Currently using local Reth node.
+// - Improve swap error handling
 
+const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 type AlloyCacheDB = CacheDB<AlloyDB<Http<Client>, Ethereum, RootProvider<Http<Client>>>>;
 
 #[derive(Parser, Debug)]
