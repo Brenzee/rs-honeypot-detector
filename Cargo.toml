@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 alloy = { version = "0.5.4", features = ["full"] }
 anyhow = "1.0.91"
-clap = { version = "4.5.20", features = ["derive"] }
+clap = { version = "4.5.20", features = ["derive", "env"] }
 revm = { version = "17.1.0", features = ["alloydb"] }
 serde = "1.0.213"
 serde_json = "1.0.132"

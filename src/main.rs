@@ -1,7 +1,9 @@
+use std::{fmt::Error, str::FromStr};
+
 use alloy::{
     eips::BlockId,
     network::Ethereum,
-    providers::{ProviderBuilder, RootProvider},
+    providers::{Provider, ProviderBuilder, RootProvider},
     sol,
     sol_types::{SolCall, SolValue},
     transports::http::{reqwest::Url, Client, Http},
@@ -27,13 +29,33 @@ mod uniswapv2;
 // - Add more options to the CLI (more logs, more details about token, use specific sender)
 
 const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+const DEFAULT_ACC: Address = address!("e4A6aD6E1B86AB8f2d2f571717592De46bFaF614");
 type AlloyCacheDB = CacheDB<AlloyDB<Http<Client>, Ethereum, RootProvider<Http<Client>>>>;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
+#[command(next_line_help = true)] // This ensures help text appears on the next line
 struct Cli {
     /// ERC20 token address to test
     token: String,
+    /// Enable full logging
+    #[arg(short, long, default_value_t = false)]
+    logs: bool,
+
+    /// Address from which the test will be done
+    #[arg(short, long)]
+    sender: Option<String>,
+
+    /// The RPC endpoint.
+    /// If no ETH_RPC_URL is set or no rpc_url is not passed, by default
+    /// Flashbots RPC URL will be used
+    #[arg(
+        short,
+        long,
+        env = "ETH_RPC_URL",
+        default_value = "https://rpc.flashbots.net/fast"
+    )]
+    rpc_url: String,
 }
 
 #[tokio::main]
@@ -42,60 +64,87 @@ async fn main() -> Result<()> {
 
     // You can check the value provided by positional arguments, or option arguments
     let token: Address = cli.token.parse().expect("Address is not valid");
+    let rpc_url_string: String = cli.rpc_url.parse().expect("Error getting RPC URL");
+    let logs_enabled: bool = cli.logs;
+    let sender = if let Some(_sender) = cli.sender {
+        Address::from_str(&_sender).map_err(|e| anyhow!("Error parsing sender's address: {e}"))?
+    } else {
+        DEFAULT_ACC
+    };
 
-    let rpc_url = Url::parse("http://192.168.0.212:8545").unwrap();
+    let rpc_url = Url::parse(&rpc_url_string).map_err(|e| anyhow!("Error parsing RPC URL: {e}"))?;
     let client = ProviderBuilder::new().on_http(rpc_url);
+    let chain_id = client
+        .get_chain_id()
+        .await
+        .map_err(|e| anyhow!("Unable to fetch Chain ID: {e}"))?;
+    if chain_id != 1 {
+        anyhow::bail!(
+            "Only mainnet is supported, the provided RPC URL is for chain {}",
+            chain_id
+        );
+    }
 
     let token = get_erc20_info(&token, &client).await?;
-    println!("Token address: {}", token.address);
-    println!("Token name: {}", token.name);
-    println!("Token symbol: {}", token.symbol);
-    println!("Token decimals: {}", token.decimals);
-    println!("");
+    if logs_enabled {
+        println!("Token address: {}", token.address);
+        println!("Token name: {}", token.name);
+        println!("Token symbol: {}", token.symbol);
+        println!("Token decimals: {}", token.decimals);
+        println!("");
+    }
 
     let univ2_pair = get_weth_pair(&token.address, &client).await?;
-    println!("WETH/{} UniV2 pair: {}", token.symbol, univ2_pair.address);
 
-    test_token(univ2_pair, token).await?;
+    if logs_enabled {
+        println!("WETH/{} UniV2 pair: {}", token.symbol, univ2_pair.address);
+    }
+
+    test_token(univ2_pair, token, sender, client, logs_enabled)
+        .await
+        .map_err(|e| anyhow!("Test failed, token is most likely a honeypot: {e}"))?;
 
     Ok(())
 }
 
 // #[tokio::main]
-async fn test_token(pair: UniV2Pair, token: ERC20) -> Result<()> {
-    // Local Reth node
-    let rpc_url = Url::parse("http://192.168.0.212:8545").unwrap();
-    let client = ProviderBuilder::new().on_http(rpc_url);
-
+async fn test_token(
+    pair: UniV2Pair,
+    token: ERC20,
+    sender: Address,
+    client: RootProvider<Http<Client>>,
+    logs_enabled: bool,
+) -> Result<()> {
     let mut cache_db = get_cache_db(client)?;
 
     // 1. Add WETH to account
-    let acc = address!("EAa1E618F9Bf501BC12680630605e1765dE6d916");
     let weth_balance_slot = U256::from(3);
-    let ten_eth = U256::from(10_u128.pow(18));
-    let weth_user_balance_slot = keccak256((acc, weth_balance_slot).abi_encode());
+    let one_eth = U256::from(10_u128.pow(18));
+    let weth_user_balance_slot = keccak256((sender, weth_balance_slot).abi_encode());
 
     cache_db
-        .insert_account_storage(WETH, weth_user_balance_slot.into(), ten_eth)
+        .insert_account_storage(WETH, weth_user_balance_slot.into(), one_eth)
         .expect("Failed to insert account storage");
 
     cache_db.insert_account_info(
-        acc,
+        sender,
         AccountInfo {
-            balance: ten_eth,
+            balance: one_eth,
             ..Default::default()
         },
     );
 
-    // let weth_balance_before = balance_of(WETH, acc, &mut cache_db)?;
-    // println!("WETH balance before swap: {}", weth_balance_before);
-    // let token_balance_before = balance_of(token.address, acc, &mut cache_db)?;
-    // println!(
-    //     "{} balance before swap: {}",
-    //     token.symbol, token_balance_before
-    // );
+    if logs_enabled {
+        let weth_balance_before = balance_of(WETH, sender, &mut cache_db)?;
+        println!("WETH balance before swap: {}", weth_balance_before);
+        let token_balance_before = balance_of(token.address, sender, &mut cache_db)?;
+        println!(
+            "{} balance before swap: {}",
+            token.symbol, token_balance_before
+        );
+    }
 
-    let amount_in = ten_eth.div_ceil(U256::from(10));
+    let amount_in = one_eth.div_ceil(U256::from(10));
     let (reserve0, reserve1) = get_reserves(pair.address, &mut cache_db)?;
 
     let weth_is_token_0 = pair.token0 == WETH;
@@ -107,11 +156,10 @@ async fn test_token(pair: UniV2Pair, token: ERC20) -> Result<()> {
 
     // 2. Swap WETH for Token
     let amount_out = get_amount_out(amount_in, reserve_in, reserve_out, &mut cache_db).await?;
-    transfer(acc, pair.address, amount_in, WETH, &mut cache_db)?;
+    transfer(sender, pair.address, amount_in, WETH, &mut cache_db)?;
     swap(
-        acc,
+        sender,
         pair.address,
-        acc,
         amount_out,
         !weth_is_token_0,
         &mut cache_db,
@@ -119,25 +167,32 @@ async fn test_token(pair: UniV2Pair, token: ERC20) -> Result<()> {
 
     // 3. Swap Token for WETH
     //    this is what shows if the token is a honeypot or not.
-    transfer(acc, pair.address, amount_out, token.address, &mut cache_db)?;
+    transfer(
+        sender,
+        pair.address,
+        amount_out,
+        token.address,
+        &mut cache_db,
+    )?;
     let weth_amount_out =
         get_amount_out(amount_out, reserve_out, reserve_in, &mut cache_db).await?;
     swap(
-        acc,
+        sender,
         pair.address,
-        acc,
         weth_amount_out,
         weth_is_token_0,
         &mut cache_db,
     )?;
 
-    // let weth_balance_after = balance_of(WETH, acc, &mut cache_db)?;
-    // println!("WETH balance after swap: {}", weth_balance_after);
-    // let token_balance_after = balance_of(token.address, acc, &mut cache_db)?;
-    // println!(
-    //     "{} balance after swap: {}",
-    //     token.symbol, token_balance_after
-    // );
+    if logs_enabled {
+        let weth_balance_after = balance_of(WETH, sender, &mut cache_db)?;
+        println!("WETH balance after swap: {}", weth_balance_after);
+        let token_balance_after = balance_of(token.address, sender, &mut cache_db)?;
+        println!(
+            "{} balance after swap: {}",
+            token.symbol, token_balance_after
+        );
+    }
 
     println!("\n Successful Swap \n");
 
@@ -231,7 +286,6 @@ fn transfer(
 fn swap(
     from: Address,
     pool_address: Address,
-    target: Address,
     amount_out: U256,
     is_token0: bool,
     cache_db: &mut AlloyCacheDB,
@@ -246,7 +300,7 @@ fn swap(
     let encoded = swapCall {
         amount0Out: amount0_out,
         amount1Out: amount1_out,
-        target,
+        target: from,
         callback: Bytes::new(),
     }
     .abi_encode();
