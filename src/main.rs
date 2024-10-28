@@ -24,6 +24,7 @@ mod uniswapv2;
 // TODO:
 // - Take RPC_URL from env variables. Currently using local Reth node.
 // - Improve swap error handling
+// - Add more options to the CLI (more logs, more details about token etc)
 
 const WETH: Address = address!("c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 type AlloyCacheDB = CacheDB<AlloyDB<Http<Client>, Ethereum, RootProvider<Http<Client>>>>;
