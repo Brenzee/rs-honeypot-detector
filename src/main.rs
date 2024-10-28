@@ -87,13 +87,13 @@ async fn test_token(pair: UniV2Pair, token: ERC20) -> Result<()> {
         },
     );
 
-    let weth_balance_before = balance_of(WETH, acc, &mut cache_db)?;
-    println!("WETH balance before swap: {}", weth_balance_before);
-    let token_balance_before = balance_of(token.address, acc, &mut cache_db)?;
-    println!(
-        "{} balance before swap: {}",
-        token.symbol, token_balance_before
-    );
+    // let weth_balance_before = balance_of(WETH, acc, &mut cache_db)?;
+    // println!("WETH balance before swap: {}", weth_balance_before);
+    // let token_balance_before = balance_of(token.address, acc, &mut cache_db)?;
+    // println!(
+    //     "{} balance before swap: {}",
+    //     token.symbol, token_balance_before
+    // );
 
     let amount_in = ten_eth.div_ceil(U256::from(10));
     let (reserve0, reserve1) = get_reserves(pair.address, &mut cache_db)?;
@@ -121,13 +121,26 @@ async fn test_token(pair: UniV2Pair, token: ERC20) -> Result<()> {
         &mut cache_db,
     )?;
 
-    let weth_balance_after = balance_of(WETH, acc, &mut cache_db)?;
-    println!("WETH balance after swap: {}", weth_balance_after);
-    let token_balance_after = balance_of(token.address, acc, &mut cache_db)?;
-    println!(
-        "{} balance after swap: {}",
-        token.symbol, token_balance_after
-    );
+    transfer(acc, pair.address, amount_out, token.address, &mut cache_db)?;
+    let weth_amount_out =
+        get_amount_out(amount_out, reserve_out, reserve_in, &mut cache_db).await?;
+
+    swap(
+        acc,
+        pair.address,
+        acc,
+        weth_amount_out,
+        weth_is_token_0,
+        &mut cache_db,
+    )?;
+
+    // let weth_balance_after = balance_of(WETH, acc, &mut cache_db)?;
+    // println!("WETH balance after swap: {}", weth_balance_after);
+    // let token_balance_after = balance_of(token.address, acc, &mut cache_db)?;
+    // println!(
+    //     "{} balance after swap: {}",
+    //     token.symbol, token_balance_after
+    // );
 
     println!("\n Successful Swap \n");
 
@@ -200,7 +213,14 @@ fn transfer(
         ExecutionResult::Success {
             output: Output::Call(value),
             ..
-        } => <bool>::abi_decode(&value, false)?,
+        } => {
+            // This is because some ERC20 tokens do not return true/false
+            if value.len() > 0 {
+                <bool>::abi_decode(&value, false)?
+            } else {
+                true
+            }
+        }
         result => return Err(anyhow!("'transfer' execution failed: {result:?}")),
     };
 
