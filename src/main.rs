@@ -1,8 +1,9 @@
-use std::{fmt::Error, str::FromStr};
+use std::str::FromStr;
 
 use alloy::{
     eips::BlockId,
     network::Ethereum,
+    primitives::{address, keccak256, Address, TxKind, U256},
     providers::{Provider, ProviderBuilder, RootProvider},
     sol,
     sol_types::{SolCall, SolValue},
@@ -11,16 +12,17 @@ use alloy::{
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use erc20::{get_erc20_info, ERC20};
+
 use revm::{
     db::{AlloyDB, CacheDB},
-    primitives::{
-        address, keccak256, AccountInfo, Address, Bytes, ExecutionResult, Output, TxKind, U256,
-    },
+    primitives::{AccountInfo, Bytes, ExecutionResult, Output},
     Evm,
 };
+use revm_actions::univ2_swap;
 use uniswapv2::{get_weth_pair, UniV2Pair};
 
 mod erc20;
+mod revm_actions;
 mod uniswapv2;
 
 // TODO:
@@ -145,42 +147,20 @@ async fn test_token(
     }
 
     let amount_in = one_eth.div_ceil(U256::from(10));
-    let (reserve0, reserve1) = get_reserves(pair.address, &mut cache_db)?;
-
-    let weth_is_token_0 = pair.token0 == WETH;
-    let (reserve_in, reserve_out) = if weth_is_token_0 {
-        (reserve0, reserve1)
-    } else {
-        (reserve1, reserve0)
-    };
+    let reserves = get_reserves(pair.address, &mut cache_db)?;
 
     // 2. Swap WETH for Token
-    let amount_out = get_amount_out(amount_in, reserve_in, reserve_out, &mut cache_db).await?;
-    transfer(sender, pair.address, amount_in, WETH, &mut cache_db)?;
-    swap(
-        sender,
-        pair.address,
-        amount_out,
-        !weth_is_token_0,
-        &mut cache_db,
-    )?;
+    let amount_out = univ2_swap(sender, &pair, WETH, amount_in, reserves, &mut cache_db)?;
 
     // 3. Swap Token for WETH
     //    this is what shows if the token is a honeypot or not.
-    transfer(
+    let reserves = get_reserves(pair.address, &mut cache_db)?;
+    univ2_swap(
         sender,
-        pair.address,
-        amount_out,
+        &pair,
         token.address,
-        &mut cache_db,
-    )?;
-    let weth_amount_out =
-        get_amount_out(amount_out, reserve_out, reserve_in, &mut cache_db).await?;
-    swap(
-        sender,
-        pair.address,
-        weth_amount_out,
-        weth_is_token_0,
+        amount_out,
+        reserves,
         &mut cache_db,
     )?;
 
