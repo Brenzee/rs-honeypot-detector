@@ -22,7 +22,22 @@ Options:
           Print version
 ```
 
+## Installation
 
+1. Clone the repository
+```
+git clone https://github.com/flashbots/honeypot-detector.git
+```
+
+2. Build the project
+```
+cargo build --release
+```
+
+3. Save the binary to your PATH
+```
+sudo mv target/release/hp /usr/local/bin/hp
+```
 
 ## Features Checklist
 
