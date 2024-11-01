@@ -12,15 +12,14 @@ use alloy::primitives::U160;
 use alloy::sol;
 use alloy::sol_types::{SolCall, SolValue};
 use anyhow::{anyhow, Result};
-use revm::primitives::{
-    address, keccak256, AccountInfo, Address, Bytes, ExecutionResult, TxKind, I256, U256,
-};
+use revm::primitives::{address, keccak256, AccountInfo, Address, ExecutionResult, TxKind, U256};
 use revm::Evm;
 
-use crate::revm_actions::{balance_of, transfer};
-use crate::{AlloyCacheDB, DEFAULT_ACC, WETH};
+use crate::cli::DEFAULT_ACC;
+use crate::revm_actions::balance_of;
+use crate::{AlloyCacheDB, WETH};
 
-const ROUTER: Address = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
+const UNIV3_ROUTER: Address = address!("E592427A0AEce92De3Edee1F18E0157C05861564");
 
 sol! {
     function swap(address recipient, bool zeroForOne, int256 amountSpecified, uint160 sqrtPriceLimitX96, bytes calldata data) external returns (int256 amount0, int256 amount1);
@@ -140,7 +139,7 @@ fn univ3_swap(
         .with_db(db)
         .modify_tx_env(|tx| {
             tx.caller = sender;
-            tx.transact_to = TxKind::Call(ROUTER);
+            tx.transact_to = TxKind::Call(UNIV3_ROUTER);
             tx.data = calldata.into();
             // tx.gas_limit = 100_000_000;
         })
@@ -163,7 +162,7 @@ fn univ3_swap(
 
 fn approve(token: Address, sender: Address, amount: U256, db: &mut AlloyCacheDB) -> Result<()> {
     let calldata = approveCall {
-        spender: ROUTER,
+        spender: UNIV3_ROUTER,
         amount,
     }
     .abi_encode();
