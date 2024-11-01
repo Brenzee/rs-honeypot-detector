@@ -7,9 +7,9 @@ use clap::Parser;
 use revm::primitives::{address, Address};
 
 use crate::{
-    erc20::{get_erc20_info, ERC20},
+    erc20::{get_erc20_info, ERC20, WETH},
     error::HPError,
-    AlloyProvider, WETH,
+    AlloyProvider,
 };
 
 pub const DEFAULT_ACC: Address = address!("e4A6aD6E1B86AB8f2d2f571717592De46bFaF614");

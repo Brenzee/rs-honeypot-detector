@@ -14,8 +14,8 @@ use revm::{
 
 use crate::{
     cli::CliConfig,
+    erc20::ERC20,
     error::{HPError, Result},
-    revm_actions::{balance_of, transfer},
     test_swap::TestSwap,
     AlloyCacheDB,
 };
@@ -41,8 +41,14 @@ pub struct UniV2Pair {
 
 pub struct UniswapV2;
 
+impl UniswapV2 {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
 impl TestSwap for UniswapV2 {
-    async fn test_swap(config: &CliConfig, db: &mut AlloyCacheDB) -> Result<()> {
+    async fn test_swap(&self, config: &CliConfig, db: &mut AlloyCacheDB) -> Result<()> {
         let pair = get_pair(&config.token.address, &WETH, &config.client).await?;
 
         // 1. Add WETH to account
@@ -62,12 +68,13 @@ impl TestSwap for UniswapV2 {
         );
 
         if config.logs {
-            let from_token_balance_before =
-                balance_of(config.from_token.address, config.sender, config.sender, db)
-                    .map_err(HPError::rpc_error)?;
-            let token_balance_before =
-                balance_of(config.token.address, config.sender, config.sender, db)
-                    .map_err(HPError::rpc_error)?;
+            let from_token_balance_before: U256 =
+                config
+                    .from_token
+                    .balance_of(config.sender, config.sender, db)?;
+            let token_balance_before: U256 =
+                config.token.balance_of(config.sender, config.sender, db)?;
+
             println!(
                 "{} balance before swap: {}",
                 config.from_token.symbol, from_token_balance_before
@@ -82,7 +89,14 @@ impl TestSwap for UniswapV2 {
         let reserves = get_univ2_reserves(pair.address, config.sender, db)?;
 
         // 2. Swap WETH for Token
-        let amount_out = univ2_swap(config.sender, &pair, WETH, amount_in, reserves, db)?;
+        let amount_out = univ2_swap(
+            config.sender,
+            &pair,
+            config.from_token.clone(),
+            amount_in,
+            reserves,
+            db,
+        )?;
 
         // 3. Swap Token for WETH
         //    this is what shows if the token is a honeypot or not.
@@ -90,19 +104,20 @@ impl TestSwap for UniswapV2 {
         univ2_swap(
             config.sender,
             &pair,
-            config.token.address,
+            config.token.clone(),
             amount_out,
             reserves,
             db,
         )?;
 
         if config.logs {
-            let from_token_balance_after =
-                balance_of(config.from_token.address, config.sender, config.sender, db)
-                    .map_err(HPError::rpc_error)?;
-            let token_balance_after =
-                balance_of(config.token.address, config.sender, config.sender, db)
-                    .map_err(HPError::rpc_error)?;
+            let from_token_balance_after: U256 =
+                config
+                    .from_token
+                    .balance_of(config.sender, config.sender, db)?;
+            let token_balance_after: U256 =
+                config.token.balance_of(config.sender, config.sender, db)?;
+
             println!(
                 "{} balance after swap: {}",
                 config.from_token.symbol, from_token_balance_after
@@ -113,12 +128,7 @@ impl TestSwap for UniswapV2 {
             );
         }
 
-        println!("\n Successful Swap \n");
-
         Ok(())
-
-        // Implement your swap testing logic here
-        // todo!("Implement swap testing for UniswapV2")
     }
 }
 
@@ -214,19 +224,19 @@ pub fn get_univ2_reserves(
 pub fn univ2_swap(
     sender: Address,
     pair: &UniV2Pair,
-    token_in: Address,
+    token_in: ERC20,
     amount_in: U256,
     reserves: (U256, U256),
     cache_db: &mut AlloyCacheDB,
 ) -> Result<U256> {
-    let is_token_0_in = pair.token0 == token_in;
+    let is_token_0_in = pair.token0 == token_in.address;
     let (reserve_in, reserve_out) = if is_token_0_in {
         reserves
     } else {
         (reserves.1, reserves.0)
     };
 
-    transfer(sender, pair.address, amount_in, token_in, cache_db)?;
+    token_in.transfer(sender, pair.address, amount_in, cache_db)?;
     let amount_out = get_univ2_amount_out(amount_in, reserve_in, reserve_out, sender, cache_db)?;
 
     let amount0_out = if is_token_0_in {
